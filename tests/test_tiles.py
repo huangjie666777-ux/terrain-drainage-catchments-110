@@ -82,3 +82,22 @@ def test_no_coverage_is_transparent(temp_service, make_tif):
     png = renderer.render("v1", datasets, 3, 1, 3, 315, 45)  # Atlantic area
     image = np.array(Image.open(BytesIO(png)).convert("RGBA"))
     assert np.array_equal(image[..., 3], np.zeros((256, 256), dtype=np.uint8))
+
+
+def test_render_without_nodata_or_mask(temp_service, make_tif):
+    # A fully valid raster with neither NoData nor an explicit mask used to
+    # fail in the mosaic warp because the masked read collapses to a scalar.
+    registry, renderer, tmp = temp_service
+    path = tmp / "plain.tif"
+    make_tif(
+        path,
+        smooth_dem(),
+        bounds=(99.80, 26.84, 99.92, 26.96),
+        nodata=None,
+        write_mask=False,
+    )
+    dataset_id = registry.ingest(path.name, path.read_bytes()).id
+    datasets = registry.publish("plain", [dataset_id])
+    png = renderer.render("plain", datasets, 12, 3184, 1730, 315, 45)
+    image = np.array(Image.open(BytesIO(png)).convert("RGBA"))
+    assert image[..., 3].max() == 255

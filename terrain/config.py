@@ -20,6 +20,8 @@ class Settings:
     max_zoom: int = 18
     max_concurrent_jobs: int = _int("TERRAIN_MAX_CONCURRENT_JOBS", 2)
     cache_max_tiles: int = _int("TERRAIN_CACHE_MAX_TILES", 256)
+    max_grid_cells: int = _int("TERRAIN_MAX_GRID_CELLS", 4_000_000)
+    earthwork_chunk_rows: int = _int("TERRAIN_EARTHWORK_CHUNK_ROWS", 256)
     default_azimuth: float = 315.0
     default_altitude: float = 45.0
 

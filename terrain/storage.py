@@ -20,6 +20,16 @@ from .config import settings
 ALLOWED_EPSG = (4326, 3857)
 
 
+def is_utm_crs(crs: CRS | None) -> bool:
+    """True for projected UTM metre CRS (e.g. EPSG:32647)."""
+    if crs is None or not crs.is_projected:
+        return False
+    unit, _factor = crs.units_factor
+    if unit != "metre":
+        return False
+    return "UTM" in crs.to_wkt().upper()
+
+
 class UploadError(ValueError):
     """Raised when an uploaded raster cannot be accepted."""
 
@@ -62,8 +72,10 @@ def validate_raster(path: Path) -> DatasetMeta:
         with rasterio.open(path) as src:
             crs = src.crs
             code = _epsg(crs)
-            if code not in ALLOWED_EPSG:
-                raise UploadError("only EPSG:4326 or EPSG:3857 rasters are accepted")
+            if code not in ALLOWED_EPSG and not is_utm_crs(crs):
+                raise UploadError(
+                    "only EPSG:4326, EPSG:3857, or UTM projected rasters are accepted"
+                )
             if src.count != 1:
                 raise UploadError(f"exactly one band required, got {src.count}")
             transform = src.transform

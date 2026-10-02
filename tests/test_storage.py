@@ -31,7 +31,7 @@ def test_rejects_multiband_unknown_crs_bad_transform_and_corrupt(temp_service, m
     registry, _renderer, _tmp = temp_service
     multi = np.stack([elevation(), elevation()])
     source = tmp_path / "multi.tif"
-    make_tif(source, multi, crs="EPSG:32647", count=2)
+    make_tif(source, multi, crs="EPSG:3413", count=2)
     with pytest.raises(UploadError) as err:
         registry.ingest("multi.tif", source.read_bytes())
     exc = err.value

@@ -1,14 +1,16 @@
-"""FastAPI HTTP interface for dataset, version, and hillshade tile access."""
+"""FastAPI HTTP interface for datasets, versions, tiles, and earthwork jobs."""
 
 from __future__ import annotations
 
 import threading
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from .config import ensure_dirs, settings
+from .earthwork import EarthworkError
+from .jobs import JobManager
 from .storage import Registry, UploadError, VersionError
 from .tiles import TileCache, TileError, TileRenderer
 
@@ -19,12 +21,21 @@ renderer = TileRenderer(
     cache=TileCache(),
     slots=threading.BoundedSemaphore(settings.max_concurrent_jobs),
 )
-app = FastAPI(title="Terrain Hillshade Tiles", version="1.0.0")
+job_manager = JobManager(registry)
+app = FastAPI(title="Terrain Hillshade Tiles", version="1.1.0")
 
 
 class PublishRequest(BaseModel):
     version: str = Field(min_length=1, max_length=128)
     datasets: list[str] = Field(min_length=1, max_length=512)
+
+
+class EarthworkRequest(BaseModel):
+    before_version: str = Field(min_length=1, max_length=128)
+    after_version: str = Field(min_length=1, max_length=128)
+    region: dict
+    epsg: int
+    resolution: float = Field(gt=0)
 
 
 @app.exception_handler(UploadError)
@@ -45,6 +56,11 @@ def tile_handler(_request, exc: TileError):
     return JSONResponse(status_code=400, content={"error": str(exc)})
 
 
+@app.exception_handler(EarthworkError)
+def earthwork_handler(_request, exc: EarthworkError):
+    return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
 @app.get("/health")
 def health():
     return {
@@ -52,6 +68,7 @@ def health():
         "max_upload_bytes": settings.max_upload_bytes,
         "max_zoom": settings.max_zoom,
         "max_concurrent_jobs": settings.max_concurrent_jobs,
+        "max_grid_cells": settings.max_grid_cells,
         "cache_tiles": len(renderer.cache),
     }
 
@@ -133,3 +150,49 @@ def tile(
         media_type="image/png",
         headers={"Cache-Control": "private, max-age=3600"},
     )
+
+
+@app.post("/earthwork/jobs", status_code=201)
+def submit_earthwork(request: EarthworkRequest):
+    try:
+        return job_manager.submit(
+            request.before_version,
+            request.after_version,
+            request.region,
+            request.epsg,
+            request.resolution,
+        )
+    except VersionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except EarthworkError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/earthwork/jobs/{job_id}")
+def get_earthwork_job(job_id: str):
+    job = job_manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    return job
+
+
+@app.post("/earthwork/jobs/{job_id}/cancel")
+def cancel_earthwork_job(job_id: str):
+    job = job_manager.cancel(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if job["status"] not in ("queued", "running"):
+        raise HTTPException(
+            status_code=409, detail=f"job is {job['status']}; cannot cancel"
+        )
+    return job_manager.get(job_id)
+
+
+@app.get("/earthwork/jobs/{job_id}/diff.tif")
+def download_earthwork_diff(job_id: str):
+    if job_manager.get(job_id) is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    path = job_manager.diff_path(job_id)
+    if path is None:
+        raise HTTPException(status_code=409, detail="job has no completed diff raster")
+    return FileResponse(path, media_type="image/tiff", filename="diff.tif")
